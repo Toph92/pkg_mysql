@@ -32,7 +32,7 @@ class DbStorage {
           userName: username,
           password: password,
           databaseName: databaseName, // optional
-          secure: true);
+          secure: false);
     } catch (e) {
       print(e);
     }

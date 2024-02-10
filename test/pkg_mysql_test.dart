@@ -3,7 +3,10 @@ import 'package:test/test.dart';
 import 'package:pkg_mysql/pkg_mysql.dart';
 
 DbStorage db = DbStorage(
-    host: 'macmini', username: 'sa', password: 'idefix', databaseName: 'SA');
+    host: 'macmini',
+    username: 'root',
+    password: 'idefix911',
+    databaseName: 'SA');
 
 void main() {
   group('A group of tests', () {
