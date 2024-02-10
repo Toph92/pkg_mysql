@@ -1,0 +1,233 @@
+import 'dart:async';
+import 'package:mysql_client/mysql_client.dart';
+import 'dart:mirrors';
+import 'package:pkg_utils/extensions.dart';
+
+
+mixin class SQL {
+  MySQLConnection? connection;
+  bool bNewConnect = false;
+  String? tableName;
+
+  // ignore: non_constant_identifier_names
+  DateTime? date_db;
+  // ignore: non_constant_identifier_names
+  DateTime? date_created_db;
+
+  // ignore: non_constant_identifier_names
+  BigInt? id_db;
+
+  final String host = "macmini";
+
+  /// retourne le code origin char(1) en fonction du serveur
+  String get origin {
+    if (host == "macmini") {
+      return "I";
+    } else if (host == "corberon") {
+      return "C";
+    }
+    assert("cas non prévu" == "");
+    return 'X';
+  }
+
+  Future<void> connect([MySQLConnection? connect]) async {
+    if (connect != null) {
+      connection = connect;
+    } else if (connection != null) {
+      // on ne fait rien, c'est connecté
+      //print("Connected");
+    } else {
+      // print("Connect");
+      connection = await MySQLConnection.createConnection(
+          host: host,
+          port: 3306,
+          userName: "sa",
+          password: "idefix",
+          databaseName: "SA", // optional
+          secure: false);
+      bNewConnect = true;
+      await connection?.connect();
+    }
+  }
+
+  Future<dynamic>? execute(String sql, {bool trace = false}) async {
+    //assert(connection != null); // connect non executé
+    await connect();
+    dynamic res;
+    trace == true ? print(sql) : {};
+    try {
+      res = await connection?.execute(sql);
+    } catch (e) {
+      print(e.toString());
+      res = null;
+    }
+    return res;
+  }
+
+  Future<dynamic>? query(String sql, {bool trace = false}) async {
+    return await execute(sql, trace: trace);
+  }
+
+  Future<void> begin() async {
+    await execute("begin");
+  }
+
+  Future<void> commit() async {
+    await execute("commit");
+  }
+
+  Future<void> rollback() async {
+    await execute("rollback");
+  }
+
+  Future<String> querySingleValue(String sql, {bool trace = false}) async {
+    dynamic res;
+    String result = "";
+    assert(sql.toLowerCase().contains("limit 1"));
+    res = await execute(sql, trace: trace);
+    for (final row in res.rows) {
+      result = row.colAt(0);
+    }
+    return await Future(() => result);
+  }
+
+  /// charge un objet a partir de [uid] ou les critères [sql]
+  Future<void> fromDatabase({BigInt? id, String? sql}) async {
+    assert(tableName != null && tableName != "");
+    assert((id != null && sql == null) || (id == null && sql != null));
+    if (id != null) {
+      await querySingleObject(
+          "select * from $tableName where id=$id limit 1", this);
+    } else {
+      await querySingleObject(
+          "select * from $tableName where $sql limit 1", this);
+    }
+  }
+
+  Future<void> querySingleObject(String sql, Object object,
+      {bool trace = false}) async {
+    InstanceMirror im = reflect(object);
+    dynamic res;
+    assert(sql.toLowerCase().contains("limit 1"));
+    res = await execute(sql, trace: trace);
+
+    for (final row in res.rows) {
+      for (final col in res.cols) {
+        String colname = col.name + "_db";
+        if (row.colByName(col.name) != null /* && colname != "id_db"*/) {
+          switch (col.type.intVal) {
+            case 3: // int
+              im.setField(Symbol(colname), int.parse(row.colByName(col.name)));
+              break;
+            case 5: // double
+              im.setField(
+                  Symbol(colname), double.parse(row.colByName(col.name)));
+              break;
+            case 8: // bigint unsigned
+              im.setField(
+                  Symbol(colname), BigInt.parse(row.colByName(col.name)));
+              break;
+            case 253: //varchar
+            case 252: //text
+              im.setField(Symbol(colname), row.colByName(col.name));
+              break;
+            case 12: //date
+              im.setField(
+                  Symbol(colname), DateTime.parse(row.colByName(col.name)));
+              break;
+            default:
+          }
+        }
+      }
+    }
+    //return await Future(() => result);
+  }
+
+  /// stock un objet dans MySQL et ferme la connection si [closeConnection]=true
+  Future<dynamic>? toDatabase(
+      {bool trace = false, bool closeConnection = false}) async {
+    InstanceMirror im = reflect(this);
+    ClassMirror? type = im.type;
+    dynamic res;
+    bool bInsert = false;
+    BigInt? idValue;
+
+    //assert(_conn != null); // connect non executé
+    String sql = "";
+    while (type != null) {
+      for (var v in type.declarations.values) {
+        if (v is VariableMirror) {
+          String name = MirrorSystem.getName(v.simpleName);
+          Type type = v.type.reflectedType;
+          try {
+            dynamic value = im.getField(Symbol(name)).reflectee;
+
+            //print("$name | $type = $value");
+            if (name == "tableName") {
+              tableName = value;
+            } else if (name == "id_db") {
+              if (value == null) {
+                bInsert = true;
+              } else {
+                idValue = value;
+              }
+            } else if (name.right(3) == "_db" && value != null) {
+              name = name.left(name.length - 3);
+              /* if (name == "id") {
+              id = value;              
+            } */
+              /*  if (name == "uid_db") {
+              //uid="concat(origin,LAST_INSERT_ID()+1)";
+              uid = value;
+              sql = "${sql.concat(",")} $name='$value'";
+            } else { */
+              switch (type) {
+                case String:
+                  value = (value as String).toSql();
+                  sql = "${sql.concat(",")} $name='$value'";
+                  break;
+                case DateTime:
+                  sql = "${sql.concat(",")} $name='$value'";
+                  break;
+                case int:
+                case double:
+                case num:
+                  sql = "${sql.concat(",")} $name=$value";
+                  break;
+                default:
+              }
+              // }
+            }
+          } catch (_) {}
+        }
+      }
+      type = type.superclass;
+    }
+    assert(tableName != null && tableName != "");
+
+    if (bInsert == true) {
+      sql = "insert into $tableName set $sql";
+    } else {
+      sql = "update $tableName set $sql where id='$idValue'";
+    }
+    //print(sql);
+    //dynamic res;
+    trace == true ? print(sql) : {};
+
+    await connect();
+    res = await connection?.execute(sql);
+    if (bInsert) {
+      id_db = res.lastInsertID;
+    }
+    //print("res=${res.lastInsertID}");
+
+    //print("res=${res.lastInsertID}");
+    if (closeConnection) await close();
+
+    return res;
+  }
+
+  Future<void> close() async {
+    await connection?.close();
+  }
+}
