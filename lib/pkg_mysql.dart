@@ -23,7 +23,7 @@ class DbStorage {
       required this.password,
       required this.databaseName});
 
-  Future<void> openAsync() async {
+  Future<void> open() async {
     if (_connect != null) return;
     try {
       _connect = await MySQLConnection.createConnection(
@@ -36,12 +36,10 @@ class DbStorage {
     } catch (e) {
       print(e);
     }
-
     await _connect?.connect();
-    print("OK");
   }
 
-  Future<void> closeAsync() async {
+  Future<void> close() async {
     await _connect?.close();
     _connect = null;
   }
@@ -79,13 +77,13 @@ class DbStorage {
       sql += "limit $limit";
     }
 
-    await openAsync();
+    await open();
     dynamic res = await _connect?.execute(sql);
 
     for (final row in res.rows) {
       Map<String, dynamic> mapRow = {};
       for (final col in res.cols) {
-        mapRow[col.name] = col;
+        mapRow[col.name] = row.colByName(col.name);
         /*if (row.colByName(col.name) != null) {
            switch (col.type.intVal) {
             case 3: // int
@@ -116,6 +114,40 @@ class DbStorage {
     return results;
   }
 
+  Future<dynamic> toDatabase(
+      {required String tableName,
+      required Map<String, dynamic> json,
+      required String idColName}) async {
+    String sql = '';
+//    bool bUpdate = false;
+    dynamic idValue;
+
+    json.forEach((k, v) {
+      if (v != null) {
+        if (k == idColName) idValue = v;
+        if (v is String) {
+          sql += "$k=${v.toSql()},";
+        } else if (v is DateTime) {
+          sql += "$k='${v.toString()}',";
+        } else {
+          sql += "$k=$v,";
+        }
+      }
+    });
+    sql = sql.left(sql.length - 1);
+    if (idValue != null) {
+      sql =
+          "update $tableName set $sql where $idColName=${idValue is String ? 'idValue' : idValue}";
+    } else {
+      sql = "insert into $tableName set $sql";
+    }
+
+    await open();
+    dynamic res = await _connect?.execute(sql);
+    idValue ??= res.lastInsertID;
+    return idValue;
+  }
+
   String replaceParams(String request, List<dynamic> values) {
     int index = 0;
 
@@ -140,6 +172,31 @@ class DbStorage {
       }
     }
     return request;
+  }
+
+  Future<dynamic>? execute(String sql, {bool trace = false}) async {
+    await open();
+    dynamic res;
+    trace == true ? print(sql) : {};
+    try {
+      res = await _connect?.execute(sql);
+    } catch (e) {
+      print(e.toString());
+      res = null;
+    }
+    return res;
+  }
+
+  Future<String> queryValue(String sql, {bool trace = false}) async {
+    dynamic res;
+    String result = "";
+    assert(sql.toLowerCase().contains("limit 1"));
+    res = await execute(sql, trace: trace);
+    for (final row in res.rows) {
+      result = row.colAt(0);
+      break;
+    }
+    return await Future(() => result);
   }
 }
 
