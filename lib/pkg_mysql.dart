@@ -3,7 +3,6 @@
 /// More dartdocs go here.
 library;
 
-export 'src/pkg_mysql_base.dart';
 import 'package:mysql_client/mysql_client.dart';
 //import 'package:pkg_utils/pkg_utils.dart';
 import 'package:pkg_utils/extensions.dart';
@@ -44,16 +43,16 @@ class DbStorage {
     _connect = null;
   }
 
-  Future<List<Map<String, dynamic>>> fromDatabase(
-      {required String sTable,
-      List<String>? columns,
-      String? where,
-      List<Object?>? whereValues,
-      int? limit,
-      String? orderBy}) async {
+  Future<Map<String, dynamic>> fromDatabase({
+    required String sTable,
+    String idColName = 'id',
+    List<String>? columns,
+    String? where,
+    List<Object?>? whereValues,
+  }) async {
     //assert(await testDelay());
 
-    List<Map<String, dynamic>> results = [];
+    Map<String, dynamic> result = {};
 
     String sql = "select ";
     if (columns != null) {
@@ -61,55 +60,125 @@ class DbStorage {
         sql += "$col,";
       }
       sql = sql.left(sql.length - 1);
+      sql += ' ';
     } else {
       sql += "* ";
     }
-    sql += "from $sTable";
+    sql += "from $sTable ";
     if (where != null) {
       sql += "where $where";
       assert(whereValues != null);
       sql += "${replaceParams(where, whereValues!)} ";
     }
-    if (orderBy != null) {
-      sql += "$orderBy ";
+    sql += "limit 1";
+
+    await open();
+    dynamic res = await _connect?.execute(sql);
+
+    for (final row in res.rows) {
+      for (final col in res.cols) {
+        switch (col.type.intVal) {
+          case 3: // int
+            result[col.name] = int.parse(row.colByName(col.name));
+            break;
+          case 5: // double
+            result[col.name] = double.parse(row.colByName(col.name));
+            break;
+          case 8: // BigInt
+            result[col.name] = BigInt.parse(row.colByName(col.name));
+            break;
+          case 7: // TimeStamp
+          case 12: // DateTime
+            result[col.name] = DateTime.parse(row.colByName(col.name));
+            break;
+          case 252:
+          case 253: // String
+            result[col.name] = row.colByName(col.name);
+            break;
+          default:
+            throw UnimplementedError();
+        }
+      }
+      break;
     }
-    if (limit != null) {
-      sql += "limit $limit";
+    return result;
+  }
+
+  Future<List<Map<String, dynamic>>> listFromDatabase(
+      {String? sTable,
+      String idColName = 'id',
+      List<String>? columns,
+      String? where,
+      List<Object?>? whereValues,
+      int? limit,
+      String? orderBy,
+      String? sql}) async {
+    //assert(await testDelay());
+
+    assert((sql != null &&
+            columns == null &&
+            where == null &&
+            limit == null &&
+            orderBy == null) ||
+        sql == null && sTable != null);
+
+    List<Map<String, dynamic>> results = [];
+
+    if (sql == null) {
+      sql = "";
+      sql = "select ";
+      if (columns != null) {
+        for (String col in columns) {
+          sql = "${sql!}$col,";
+        }
+        sql = sql!.left(sql.length - 1);
+        sql += ' ';
+      } else {
+        sql += "* ";
+      }
+      sql += "from $sTable ";
+      if (where != null) {
+        sql += "where ";
+        assert(whereValues != null);
+        sql += "${replaceParams(where, whereValues!)} ";
+      }
+      if (orderBy != null) {
+        sql += "order by $orderBy ";
+      }
+      if (limit != null) {
+        sql += "limit $limit";
+      }
     }
 
     await open();
     dynamic res = await _connect?.execute(sql);
 
     for (final row in res.rows) {
-      Map<String, dynamic> mapRow = {};
+      Map<String, dynamic> jsonRow = {};
       for (final col in res.cols) {
-        mapRow[col.name] = row.colByName(col.name);
-        /*if (row.colByName(col.name) != null) {
-           switch (col.type.intVal) {
-            case 3: // int
-              im.setField(Symbol(colname), int.parse(row.colByName(col.name)));
-              break;
-            case 5: // double
-              im.setField(
-                  Symbol(colname), double.parse(row.colByName(col.name)));
-              break;
-            case 8: // bigint unsigned
-              im.setField(
-                  Symbol(colname), BigInt.parse(row.colByName(col.name)));
-              break;
-            case 253: //varchar
-            case 252: //text
-              im.setField(Symbol(colname), row.colByName(col.name));
-              break;
-            case 12: //date
-              im.setField(
-                  Symbol(colname), DateTime.parse(row.colByName(col.name)));
-              break;
-            default:
-          } 
-        }*/
+        switch (col.type.intVal) {
+          case 3: // int
+            jsonRow[col.name] = int.parse(row.colByName(col.name));
+            break;
+          case 5: // double
+            jsonRow[col.name] = double.parse(row.colByName(col.name));
+            break;
+          case 8: // BigInt
+            jsonRow[col.name] = BigInt.parse(row.colByName(col.name));
+            break;
+          case 7: // TimeStamp
+          case 12: // DateTime
+            jsonRow[col.name] = DateTime.parse(row.colByName(col.name));
+            break;
+          case 252:
+          case 253: // String
+            jsonRow[col.name] = row.colByName(col.name);
+            break;
+          default:
+            throw UnimplementedError();
+        }
       }
-      results.add(mapRow);
+      results.add(jsonRow);
     }
     return results;
   }
@@ -117,7 +186,7 @@ class DbStorage {
   Future<dynamic> toDatabase(
       {required String tableName,
       required Map<String, dynamic> json,
-      required String idColName}) async {
+      String idColName = 'id'}) async {
     String sql = '';
 //    bool bUpdate = false;
     dynamic idValue;

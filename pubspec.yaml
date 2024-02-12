@@ -1,6 +1,7 @@
 name: pkg_mysql
 description: A starting point for Dart libraries or applications.
 version: 1.0.0
+publish_to: none
 # repository: https://github.com/my_org/my_repo
 
 environment:
@@ -8,6 +9,7 @@ environment:
 
 # Add regular dependencies here.
 dependencies:
+  http: ^1.2.0
   mysql_client: ^0.0.27  
   pkg_utils:
     git:
