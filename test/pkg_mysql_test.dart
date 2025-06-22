@@ -2,7 +2,7 @@ import 'package:pkg_mysql/pkg_mysql.dart';
 import 'package:test/test.dart';
 
 DbStorage db = DbStorage(
-    host: 'macmini', username: 'sa', password: 'idefix', databaseName: 'SA');
+    host: 'iSrv1', username: 'sa', password: 'idefix', databaseName: 'test');
 
 class Test {
   BigInt? id;
