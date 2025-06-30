@@ -251,6 +251,7 @@ class DbStorage {
       res = await _connect?.execute(sql);
     } catch (e) {
       print(e.toString());
+      await close();
       res = null;
     }
     return res;
