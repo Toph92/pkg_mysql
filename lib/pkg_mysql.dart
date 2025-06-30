@@ -253,6 +253,7 @@ class DbStorage {
       print(e.toString());
       await close();
       res = null;
+      rethrow;
     }
     return res;
   }
