@@ -247,14 +247,14 @@ class DbStorage {
     await open();
     dynamic res;
     trace == true ? print(sql) : {};
-    try {
-      res = await _connect?.execute(sql);
-    } catch (e) {
+    /*try {*/
+    res = await _connect?.execute(sql);
+    /*} catch (e) {
       print(e.toString());
       await close();
       res = null;
       rethrow;
-    }
+    }*/
     return res;
   }
 
