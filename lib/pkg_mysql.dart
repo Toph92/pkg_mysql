@@ -1,41 +1,102 @@
-/// Support for doing something awesome.
-///
-/// More dartdocs go here.
 library;
 
-import 'package:mysql_client/mysql_client.dart';
+//import 'package:mysql_client/mysql_client.dart' as mysql;
+import 'package:postgres/postgres.dart' as postgres;
 //import 'package:pkg_utils/pkg_utils.dart';
 import 'package:pkg_utils/extensions.dart';
 
+enum DbType {
+  mysql,
+  postgres,
+}
+
+mixin DbObject {
+  BigInt? id;
+  DateTime? dCreated;
+  DateTime? dUpdated;
+  String? tableName;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'dCreated': dCreated,
+        'dUpdated': dUpdated,
+      };
+
+  void fromJson(Map<String, dynamic> json) {
+    id = json["id"] != null ? json["id"] as BigInt : null;
+    dCreated =
+        json['dCreated'] != null ? DateTime.parse(json['dCreated']) : null;
+    dUpdated =
+        json['dUpdated'] != null ? DateTime.parse(json['dUpdated']) : null;
+  }
+
+  ({Map<String, dynamic> json, String tableName}) toDatabase() {
+    assert(tableName != null);
+    assert(toJson().length > 3); // more than id, dCreated, dUpdated columns
+    if (id == null) {
+      dCreated = DateTime.now();
+    } else {
+      dCreated = dCreated ?? DateTime.now();
+    }
+    return (json: toJson(), tableName: tableName!);
+  }
+
+  void fromDatabase(Map<String, dynamic> json) {
+    assert(tableName != null);
+    assert(id != null);
+    fromJson(json);
+  }
+}
+
 class DbStorage {
-  MySQLConnection? _connect;
+  dynamic _connect;
   final String host;
   final int port;
   final String username;
   final String password;
   final String databaseName;
+  final DbType dbType;
 
   DbStorage(
       {required this.host,
       this.port = 3306,
       required this.username,
       required this.password,
-      required this.databaseName});
+      required this.databaseName,
+      required this.dbType});
 
   Future<void> open() async {
     if (_connect != null) return;
     try {
-      _connect = await MySQLConnection.createConnection(
-          host: host,
-          port: port,
-          userName: username,
-          password: password,
-          databaseName: databaseName, // optional
-          secure: false);
+      switch (dbType) {
+        case DbType.mysql:
+          /* _connect = await mysql.MySQLConnection.createConnection(
+            host: host,
+            port: port,
+            userName: username,
+            password: password,
+            databaseName: databaseName, // optional
+            secure: false,
+          );
+          await _connect?.connect(); */
+          break;
+        case DbType.postgres:
+          _connect = await postgres.Connection.open(
+            postgres.Endpoint(
+              host: host,
+              database: databaseName,
+              username: username,
+              password: password,
+            ),
+            settings:
+                postgres.ConnectionSettings(sslMode: postgres.SslMode.disable),
+          );
+          break;
+      }
     } catch (e) {
+      _connect = null;
       print(e);
     }
-    await _connect?.connect();
   }
 
   Future<void> close() async {
@@ -183,38 +244,85 @@ class DbStorage {
     return results;
   }
 
-  Future<dynamic> toDatabase(
-      {required String tableName,
-      required Map<String, dynamic> json,
-      String idColName = 'id'}) async {
-    String sql = '';
-//    bool bUpdate = false;
-    dynamic idValue;
+  /// Formate une valeur pour l'utilisation dans une requête SQL
+  String _formatSqlValue(dynamic value) {
+    if (value == null) {
+      return "NULL";
+    } else if (value is String) {
+      return "'${value.replaceAll("'", "''")}'";
+    } else if (value is DateTime) {
+      return "'${value.toIso8601String()}'";
+    } else {
+      return value.toString();
+    }
+  }
 
-    json.forEach((k, v) {
-      if (v != null) {
-        if (k == idColName) idValue = v;
-        if (v is String) {
-          sql += "$k=${v.toSql()},";
-        } else if (v is DateTime) {
-          sql += "$k='${v.toString()}',";
-        } else {
-          sql += "$k=$v,";
-        }
+  Future<dynamic> toDatabase(
+      ({Map<String, dynamic> json, String tableName}) object,
+      {String idColName = 'id'}) async {
+    dynamic idValue;
+    List<String> fieldsNames = [];
+    List<dynamic> fieldsValues = [];
+
+    // Extraire l'ID et préparer les champs
+    object.json.forEach((k, v) {
+      if (k == idColName) {
+        idValue = v;
+      } else {
+        fieldsNames.add(k);
+        fieldsValues.add(v);
       }
     });
-    sql = sql.left(sql.length - 1);
+
+    String sql = '';
+
     if (idValue != null) {
+      // UPDATE: construire la clause SET
+      List<String> setParts = [];
+      for (int i = 0; i < fieldsNames.length; i++) {
+        String fieldName = fieldsNames[i];
+        dynamic fieldValue = fieldsValues[i];
+        setParts.add("$fieldName=${_formatSqlValue(fieldValue)}");
+      }
+
+      String whereClause = "$idColName=${_formatSqlValue(idValue)}";
       sql =
-          "update $tableName set $sql where $idColName=${idValue is String ? 'idValue' : idValue}";
+          "UPDATE $object.tableName SET ${setParts.join(', ')} WHERE $whereClause";
     } else {
-      sql = "insert into $tableName set $sql";
+      // INSERT: construire la requête d'insertion
+      List<String> valuesParts =
+          fieldsValues.map((value) => _formatSqlValue(value)).toList();
+
+      switch (dbType) {
+        case DbType.mysql:
+          sql =
+              "INSERT INTO ${object.tableName} (${fieldsNames.join(', ')}) VALUES (${valuesParts.join(', ')})";
+          break;
+        case DbType.postgres:
+          sql =
+              "INSERT INTO ${object.tableName} (${fieldsNames.join(', ')}) VALUES (${valuesParts.join(', ')}) RETURNING $idColName";
+          break;
+      }
     }
 
     await open();
     dynamic res = await _connect?.execute(sql);
-    idValue ??= res.lastInsertID;
-    return idValue;
+
+    // Retourner l'ID (existant pour update, nouveau pour insert)
+    if (idValue != null) {
+      return idValue;
+    } else {
+      switch (dbType) {
+        case DbType.mysql:
+          return res.lastInsertID;
+        case DbType.postgres:
+          // Pour PostgreSQL, l'ID est retourné directement dans le résultat de la requête RETURNING
+          if (res.isNotEmpty) {
+            return res.first.first; // Premier enregistrement, première colonne
+          }
+          return null;
+      }
+    }
   }
 
   String replaceParams(String request, List<dynamic> values) {
@@ -247,14 +355,14 @@ class DbStorage {
     await open();
     dynamic res;
     trace == true ? print(sql) : {};
-    /*try {*/
-    res = await _connect?.execute(sql);
-    /*} catch (e) {
+    try {
+      res = await _connect?.execute(sql);
+    } catch (e) {
       print(e.toString());
       await close();
       res = null;
       rethrow;
-    }*/
+    }
     return res;
   }
 

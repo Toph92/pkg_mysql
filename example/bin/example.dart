@@ -8,6 +8,7 @@ DbStorage db = DbStorage(
   username: 'sa',
   password: 'idefix',
   databaseName: 'test',
+  dbType: DbType.postgres,
 );
 
 void main(List<String> arguments) async {
