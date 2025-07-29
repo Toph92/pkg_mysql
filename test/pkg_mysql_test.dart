@@ -15,7 +15,7 @@ DbStorage db = DbStorage(
     databaseName: 'tests',
     dbType: DbType.postgres);
 
-class User with DbObject {
+class User extends DbObject {
   String? name;
   DateTime? birthdate;
   int? age;
@@ -106,7 +106,7 @@ void main() {
       ..height = 1.75
       ..age = 56;
     //await db.toDatabase(tableName: tableName, json: fields);
-    await db.toDatabase(test.toDatabase());
+    await db.toDatabase(test);
     await db.close();
 
     return;

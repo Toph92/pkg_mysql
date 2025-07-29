@@ -10,7 +10,7 @@ enum DbType {
   postgres,
 }
 
-mixin DbObject {
+abstract class DbObject {
   BigInt? id;
   DateTime? dCreated;
   DateTime? dUpdated;
@@ -258,14 +258,16 @@ class DbStorage {
   }
 
   Future<dynamic> toDatabase(
-      ({Map<String, dynamic> json, String tableName}) object,
+      /*({Map<String, dynamic> json, String tableName}) object, */
+      DbObject object,
       {String idColName = 'id'}) async {
     dynamic idValue;
     List<String> fieldsNames = [];
     List<dynamic> fieldsValues = [];
+    Map<String, dynamic> json = object.toJson();
 
     // Extraire l'ID et préparer les champs
-    object.json.forEach((k, v) {
+    json.forEach((k, v) {
       if (k == idColName) {
         idValue = v;
       } else {
@@ -287,7 +289,7 @@ class DbStorage {
 
       String whereClause = "$idColName=${_formatSqlValue(idValue)}";
       sql =
-          "UPDATE $object.tableName SET ${setParts.join(', ')} WHERE $whereClause";
+          "UPDATE ${object.tableName} SET ${setParts.join(',')} WHERE $whereClause";
     } else {
       // INSERT: construire la requête d'insertion
       List<String> valuesParts =
@@ -296,11 +298,11 @@ class DbStorage {
       switch (dbType) {
         case DbType.mysql:
           sql =
-              "INSERT INTO ${object.tableName} (${fieldsNames.join(', ')}) VALUES (${valuesParts.join(', ')})";
+              "INSERT INTO ${object.tableName} (${fieldsNames.join(',')}) VALUES (${valuesParts.join(',')})";
           break;
         case DbType.postgres:
           sql =
-              "INSERT INTO ${object.tableName} (${fieldsNames.join(', ')}) VALUES (${valuesParts.join(', ')}) RETURNING $idColName";
+              "INSERT INTO ${object.tableName} (${fieldsNames.join(',')}) VALUES (${valuesParts.join(',')}) RETURNING $idColName";
           break;
       }
     }
