@@ -10,7 +10,12 @@ enum DbType {
   postgres,
 }
 
-abstract class DbObject {
+enum DbOptions {
+  updateID, // update ID after insert
+  forceInsert // force insert even if ID exists
+}
+
+class DbObject {
   BigInt? id;
   DateTime? dCreated;
   DateTime? dUpdated;
@@ -30,7 +35,7 @@ abstract class DbObject {
         json['dUpdated'] != null ? DateTime.parse(json['dUpdated']) : null;
   }
 
-  ({Map<String, dynamic> json, String tableName}) toDatabase() {
+  /* ({Map<String, dynamic> json, String tableName}) toDatabase() {
     assert(tableName != null);
     assert(toJson().length > 3); // more than id, dCreated, dUpdated columns
     if (id == null) {
@@ -39,7 +44,7 @@ abstract class DbObject {
       dCreated = dCreated ?? DateTime.now();
     }
     return (json: toJson(), tableName: tableName!);
-  }
+  } */
 
   void fromDatabase(Map<String, dynamic> json) {
     assert(tableName != null);
@@ -104,7 +109,7 @@ class DbStorage {
     _connect = null;
   }
 
-  Future<Map<String, dynamic>> fromDatabase({
+  /* Future<Map<String, dynamic>> fromDatabase({
     required String sTable,
     String idColName = 'id',
     List<String>? columns,
@@ -163,7 +168,7 @@ class DbStorage {
       break;
     }
     return result;
-  }
+  } */
 
   Future<List<Map<String, dynamic>>> listFromDatabase(
       {String? sTable,
@@ -257,14 +262,58 @@ class DbStorage {
     }
   }
 
-  Future<dynamic> toDatabase(
-      /*({Map<String, dynamic> json, String tableName}) object, */
-      DbObject object,
-      {String idColName = 'id'}) async {
+  Future<DbObject> fromDatabase(BigInt id,
+      {String sTable = 'test', String idColName = 'id'}) async {
+    assert(sTable.isNotEmpty);
+    await open();
+
+    String sql =
+        "SELECT * FROM $sTable WHERE $idColName = ${_formatSqlValue(id)}";
+    dynamic res = await _connect?.execute(sql);
+
+    Map<String, dynamic> json = {};
+
+    // Traiter le résultat de la requête
+    for (final row in res.rows) {
+      for (final col in res.cols) {
+        switch (col.type.intVal) {
+          case 3: // int
+            json[col.name] = int.parse(row.colByName(col.name));
+            break;
+          case 5: // double
+            json[col.name] = double.parse(row.colByName(col.name));
+            break;
+          case 8: // BigInt
+            json[col.name] = BigInt.parse(row.colByName(col.name));
+            break;
+          case 7: // TimeStamp
+          case 12: // DateTime
+            json[col.name] = DateTime.parse(row.colByName(col.name));
+            break;
+          case 252:
+          case 253: // String
+            json[col.name] = row.colByName(col.name);
+            break;
+          default:
+            throw UnimplementedError(
+                'Type de colonne non supporté: ${col.type.intVal}');
+        }
+      }
+      break; // Ne prendre que le premier résultat
+    }
+
+    DbObject object = DbObject()..fromJson(json);
+    object.tableName = sTable;
+    return object;
+  }
+
+  Future<bool> toDatabase(DbObject object,
+      {String idColName = 'id', List<DbOptions>? options}) async {
     dynamic idValue;
     List<String> fieldsNames = [];
     List<dynamic> fieldsValues = [];
     Map<String, dynamic> json = object.toJson();
+    BigInt? tmpId;
 
     // Extraire l'ID et préparer les champs
     json.forEach((k, v) {
@@ -278,7 +327,10 @@ class DbStorage {
 
     String sql = '';
 
-    if (idValue != null) {
+    if (idValue != null &&
+        (options == null ||
+            options.isEmpty ||
+            options.contains(DbOptions.forceInsert) == false)) {
       // UPDATE: construire la clause SET
       List<String> setParts = [];
       for (int i = 0; i < fieldsNames.length; i++) {
@@ -286,7 +338,6 @@ class DbStorage {
         dynamic fieldValue = fieldsValues[i];
         setParts.add("$fieldName=${_formatSqlValue(fieldValue)}");
       }
-
       String whereClause = "$idColName=${_formatSqlValue(idValue)}";
       sql =
           "UPDATE ${object.tableName} SET ${setParts.join(',')} WHERE $whereClause";
@@ -294,6 +345,10 @@ class DbStorage {
       // INSERT: construire la requête d'insertion
       List<String> valuesParts =
           fieldsValues.map((value) => _formatSqlValue(value)).toList();
+      if (options != null && options.contains(DbOptions.forceInsert)) {
+        fieldsNames.add('id');
+        valuesParts.add(_formatSqlValue(object.id));
+      }
 
       switch (dbType) {
         case DbType.mysql:
@@ -306,25 +361,31 @@ class DbStorage {
           break;
       }
     }
-
     await open();
     dynamic res = await _connect?.execute(sql);
 
+    if (options == null || options.isEmpty) {
+      // Si aucune option n'est spécifiée, on ne fait rien de spécial
+      return true;
+    }
+
     // Retourner l'ID (existant pour update, nouveau pour insert)
-    if (idValue != null) {
-      return idValue;
+    if (idValue != null && options.contains(DbOptions.updateID)) {
+      return true;
     } else {
       switch (dbType) {
         case DbType.mysql:
-          return res.lastInsertID;
+          tmpId = res.lastInsertID;
         case DbType.postgres:
           // Pour PostgreSQL, l'ID est retourné directement dans le résultat de la requête RETURNING
           if (res.isNotEmpty) {
-            return res.first.first; // Premier enregistrement, première colonne
+            tmpId = BigInt.from(
+                res.first.first); // Premier enregistrement, première colonne
           }
-          return null;
       }
+      object.id = tmpId;
     }
+    return true;
   }
 
   String replaceParams(String request, List<dynamic> values) {

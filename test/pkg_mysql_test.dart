@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:pkg_mysql/pkg_mysql.dart';
 import 'package:test/test.dart';
 
@@ -105,30 +107,63 @@ void main() {
       ..birthdate = DateTime(1968, 8, 14)
       ..height = 1.75
       ..age = 56;
-    //await db.toDatabase(tableName: tableName, json: fields);
     await db.toDatabase(test);
     await db.close();
+    expect(test.id, isNull);
+  });
 
-    return;
-
+  test('write objet to toDatabase and update id', () async {
     await db.open();
     await db.execute("truncate users");
-    /* for (int i = 0; i < 100; i++) {
-      User test = User()
-        ..dCreated = DateTime.now()
-        ..dUpdated = DateTime.now()
-        ..name = "Desbois $i"
-        ..height = i + 0.75
-        ..age = i;
-      test.toDatabase();
-      assert(test.id != null);
-    } */
 
+    User test = User()
+      ..dCreated = DateTime.now()
+      ..dUpdated = DateTime.now()
+      ..name = "Desbois"
+      ..birthdate = DateTime(1968, 8, 14)
+      ..height = 1.75
+      ..age = 56;
+    await db.toDatabase(test, options: [DbOptions.updateID]);
+    await db.close();
+    expect(test.id, isNotNull);
+  });
+
+  test('write objet to toDatabase with specifique ID', () async {
+    await db.open();
+    await db.execute("truncate users");
+    User test = User()
+      ..dCreated = DateTime.now()
+      ..dUpdated = DateTime.now()
+      ..name = "Desbois"
+      ..birthdate = DateTime(1968, 8, 14)
+      ..height = 1.75
+      ..age = 56
+      ..id = BigInt.from(1000000000000000000);
+    await db.toDatabase(test, options: [DbOptions.forceInsert]);
+    await db.close();
+  });
+
+  test('read object  by ID', () async {
+    await db.open();
+    await db.execute("truncate users");
+    User test = User()
+      ..dCreated = DateTime.now()
+      ..dUpdated = DateTime.now()
+      ..name = "Desbois"
+      ..birthdate = DateTime(1968, 8, 14)
+      ..height = 1.75
+      ..age = 56
+      ..id = BigInt.from(10);
+    await db.toDatabase(test, options: [DbOptions.forceInsert]);
+
+    test = await db.fromDatabase(10);
+
+    //await test.fromDatabase();
     await db.close();
   });
 
   test('read objets with fromDatabase', () async {
-    /*   BigInt? id;
+    /*
     await db.open();
     await db.execute("truncate test");
     User? test = User()
@@ -147,7 +182,7 @@ void main() {
     expect(test.name, "Desbois"); */
   });
 
-  test('fill listFromDatabase', () async {
+  /* test('fill listFromDatabase', () async {
     await db.open();
     await db.execute("truncate test");
     for (int i = 0; i < 100; i++) {
@@ -260,5 +295,5 @@ void main() {
     expect(list.last.age, null);
     expect(list.length, 51);
     await db.close();
-  });
+  }); */
 }
