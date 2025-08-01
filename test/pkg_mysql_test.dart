@@ -43,9 +43,15 @@ class User extends DbObject {
     name = json['name'] as String?;
     age = json['age'] as int?;
     height = json['height'] as double?;
-    birthdate = json['birthdate'] != null
-        ? DateTime.parse(json['birthdate'] as String)
-        : null;
+    if (json['birthdate'] != null) {
+      if (json['birthdate'] is DateTime) {
+        birthdate = json['birthdate'] as DateTime;
+      } else {
+        birthdate = DateTime.tryParse(json['birthdate'].toString());
+      }
+    } else {
+      birthdate = null;
+    }
   }
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -156,9 +162,18 @@ void main() {
       ..id = BigInt.from(10);
     await db.toDatabase(test, options: [DbOptions.forceInsert]);
 
-    test = await db.fromDatabase(10);
+    // Récupérer l'objet User via la méthode générique fromDatabase
+    test = await db.fromDatabase<User>(
+      BigInt.from(10),
+      sTableName: User().tableName,
+      constructor: () => User(),
+    );
 
-    //await test.fromDatabase();
+    // Récupérer la requête directement pour obtenir toutes les données
+    /* var res = await db.execute("SELECT * FROM users WHERE id = 10");
+    Map<String, dynamic> userData = res.first.toColumnMap();
+    test = User()..fromJson(userData); */
+
     await db.close();
   });
 

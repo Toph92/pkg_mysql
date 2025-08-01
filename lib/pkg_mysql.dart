@@ -19,7 +19,7 @@ class DbObject {
   BigInt? id;
   DateTime? dCreated;
   DateTime? dUpdated;
-  String? tableName;
+  late String tableName;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -28,27 +28,61 @@ class DbObject {
       };
 
   void fromJson(Map<String, dynamic> json) {
-    id = json["id"] != null ? json["id"] as BigInt : null;
-    dCreated =
-        json['dCreated'] != null ? DateTime.parse(json['dCreated']) : null;
-    dUpdated =
-        json['dUpdated'] != null ? DateTime.parse(json['dUpdated']) : null;
+    if (json["id"] != null) {
+      if (json["id"] is BigInt) {
+        id = json["id"] as BigInt;
+      } else if (json["id"] is int) {
+        id = BigInt.from(json["id"] as int);
+      } else {
+        id = BigInt.tryParse(json["id"].toString());
+      }
+    } else {
+      id = null;
+    }
+
+    if (json['dCreated'] != null) {
+      if (json['dCreated'] is DateTime) {
+        dCreated = json['dCreated'] as DateTime;
+      } else {
+        dCreated = DateTime.tryParse(json['dCreated'].toString());
+      }
+    } else {
+      dCreated = null;
+    }
+
+    if (json['dUpdated'] != null) {
+      if (json['dUpdated'] is DateTime) {
+        dUpdated = json['dUpdated'] as DateTime;
+      } else {
+        dUpdated = DateTime.tryParse(json['dUpdated'].toString());
+      }
+    } else {
+      dUpdated = null;
+    }
   }
 
-  /* ({Map<String, dynamic> json, String tableName}) toDatabase() {
-    assert(tableName != null);
-    assert(toJson().length > 3); // more than id, dCreated, dUpdated columns
-    if (id == null) {
-      dCreated = DateTime.now();
-    } else {
-      dCreated = dCreated ?? DateTime.now();
-    }
-    return (json: toJson(), tableName: tableName!);
-  } */
+  /// Charge cet objet depuis la base de données en utilisant son id et tableName
+  /// Charge cet objet depuis la base en utilisant son id et tableName
+  Future<void> loadFromDatabase(DbStorage storage, {String idColName = 'id'}) async {
+    assert(id != null, 'L’id doit être défini avant le chargement');
+    // Utiliser la méthode générique fromDatabase avec un constructor par défaut
+    DbObject dbObj = await storage.fromDatabase<DbObject>(
+      id!,
+      sTableName: tableName,
+      constructor: () => DbObject(),
+      idColName: idColName,
+    );
+    fromJson(dbObj.toJson());
+  }
 
-  void fromDatabase(Map<String, dynamic> json) {
-    assert(tableName != null);
+  /// Charge cet objet depuis la base de données via DbStorage
+  Future<void> fromDatabase(DbStorage storage, {String idColName = 'id'}) async {
     assert(id != null);
+    await storage.open();
+    String sql =
+        "SELECT * FROM $tableName WHERE $idColName = ${storage._formatSqlValue(id)} LIMIT 1";
+    var res = await storage._connect.execute(sql);
+    Map<String, dynamic> json = res.first.toColumnMap();
     fromJson(json);
   }
 }
@@ -219,31 +253,9 @@ class DbStorage {
     await open();
     dynamic res = await _connect?.execute(sql);
 
-    for (final row in res.rows) {
-      Map<String, dynamic> jsonRow = {};
-      for (final col in res.cols) {
-        switch (col.type.intVal) {
-          case 3: // int
-            jsonRow[col.name] = int.parse(row.colByName(col.name));
-            break;
-          case 5: // double
-            jsonRow[col.name] = double.parse(row.colByName(col.name));
-            break;
-          case 8: // BigInt
-            jsonRow[col.name] = BigInt.parse(row.colByName(col.name));
-            break;
-          case 7: // TimeStamp
-          case 12: // DateTime
-            jsonRow[col.name] = DateTime.parse(row.colByName(col.name));
-            break;
-          case 252:
-          case 253: // String
-            jsonRow[col.name] = row.colByName(col.name);
-            break;
-          default:
-            throw UnimplementedError();
-        }
-      }
+    for (final row in res) {
+      // Utiliser toColumnMap() pour récupérer directement un Map<String, dynamic>
+      Map<String, dynamic> jsonRow = row.toColumnMap();
       results.add(jsonRow);
     }
     return results;
@@ -257,53 +269,35 @@ class DbStorage {
       return "'${value.replaceAll("'", "''")}'";
     } else if (value is DateTime) {
       return "'${value.toIso8601String()}'";
+    } else if (value is BigInt) {
+      return value.toString(); // BigInt is already a string representation
     } else {
       return value.toString();
     }
   }
 
-  Future<DbObject> fromDatabase(BigInt id,
-      {String sTable = 'test', String idColName = 'id'}) async {
-    assert(sTable.isNotEmpty);
-    await open();
-
-    String sql =
-        "SELECT * FROM $sTable WHERE $idColName = ${_formatSqlValue(id)}";
-    dynamic res = await _connect?.execute(sql);
-
-    Map<String, dynamic> json = {};
-
-    // Traiter le résultat de la requête
-    for (final row in res.rows) {
-      for (final col in res.cols) {
-        switch (col.type.intVal) {
-          case 3: // int
-            json[col.name] = int.parse(row.colByName(col.name));
-            break;
-          case 5: // double
-            json[col.name] = double.parse(row.colByName(col.name));
-            break;
-          case 8: // BigInt
-            json[col.name] = BigInt.parse(row.colByName(col.name));
-            break;
-          case 7: // TimeStamp
-          case 12: // DateTime
-            json[col.name] = DateTime.parse(row.colByName(col.name));
-            break;
-          case 252:
-          case 253: // String
-            json[col.name] = row.colByName(col.name);
-            break;
-          default:
-            throw UnimplementedError(
-                'Type de colonne non supporté: ${col.type.intVal}');
-        }
-      }
-      break; // Ne prendre que le premier résultat
+  /// Récupère un objet de type [T] depuis la base à partir de son id
+  Future<T> fromDatabase<T extends DbObject>(
+    dynamic id, {
+    required String sTableName,
+    required T Function() constructor,
+    String idColName = 'id',
+  }) async {
+    assert(sTableName.isNotEmpty);
+    if (id is int) {
+      id = BigInt.from(id);
+    } else if (id is! BigInt) {
+      throw ArgumentError('ID must be of type BigInt or int');
     }
+    await open();
+    String sql =
+        "SELECT * FROM $sTableName WHERE $idColName = ${_formatSqlValue(id)} LIMIT 1";
+    var res = await _connect?.execute(sql);
+    Map<String, dynamic> json = res.first.toColumnMap();
 
-    DbObject object = DbObject()..fromJson(json);
-    object.tableName = sTable;
+    T object = constructor();
+    object.fromJson(json);
+    object.tableName = sTableName;
     return object;
   }
 
@@ -434,9 +428,8 @@ class DbStorage {
     String result = "";
     assert(sql.toLowerCase().contains("limit 1"));
     res = await execute(sql, trace: trace);
-    for (final row in res.rows) {
-      result = row.colAt(0);
-      break;
+    if (res.isNotEmpty) {
+      result = res.first[0]?.toString() ?? "";
     }
     return await Future(() => result);
   }
